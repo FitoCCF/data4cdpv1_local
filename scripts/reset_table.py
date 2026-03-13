@@ -13,7 +13,7 @@ def reset_table():
         connection.autocommit = True
         cursor = connection.cursor()
         
-        print("Truncating table works4cdp_taskp...")
+        print("Truncating table works4cdp_taskgroupassignment...")
         cursor.execute("TRUNCATE TABLE works4cdp_taskp RESTART IDENTITY CASCADE;")
         print("Table truncated and index reset successfully.")
         
