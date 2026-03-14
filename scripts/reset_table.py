@@ -8,13 +8,13 @@ def reset_table():
             database="mydb",
             user="myuser",
             password="mypassword",
-            port=5432
+            port=5433
         )
         connection.autocommit = True
         cursor = connection.cursor()
         
         print("Truncating table works4cdp_taskgroupassignment...")
-        cursor.execute("TRUNCATE TABLE works4cdp_taskp RESTART IDENTITY CASCADE;")
+        cursor.execute("TRUNCATE TABLE works4cdp_assay RESTART IDENTITY CASCADE;")
         print("Table truncated and index reset successfully.")
         
         cursor.close()
