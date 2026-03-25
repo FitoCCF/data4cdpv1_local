@@ -1,59 +1,72 @@
-from contextlib import nullcontext
-
 import psycopg2
-from datetime import datetime
 from taskpx import insert_task
 
-# Conexión a la base de datos PostgreSQL
-connection = psycopg2.connect(
-    host="localhost",
-    database="mydb",
-    user="myuser",
-    password="mypassword",
-    port=5432
-)
-cursor = connection.cursor()
+# Configuración de conexión
+db_config = {
+    "host": "localhost",
+    "database": "mydb",
+    "user": "myuser",
+    "password": "mypassword",
+    "port": 5433
+}
 
-# Consulta para obtener las tareas
-query = """
-    SELECT id, frequency, start_date
-    FROM works4cdp_task
-    WHERE id>99 order by id
-"""
-cursor.execute(query)
-tasks = cursor.fetchall()
-print(tasks)
+try:
+    connection = psycopg2.connect(**db_config)
+    cursor = connection.cursor()
 
+    # 1. Obtener ID del estado 'Pendiente' u obtener el 1 por defecto
+    # Asumimos que ID 1 = Pendiente (P)
+    state_p_id = 2 
+    
+    # 2. Obtener tareas base
+    query = """
+        SELECT id, frequency, start_date, turn 
+        FROM works4cdp_task 
+        WHERE frequency IS NOT NULL
+          AND frequency != ''
+          AND frequency != '999'
+        ORDER BY id
+    """
+    cursor.execute(query)
+    tasks = cursor.fetchall()
 
-end_date = "2026-12-31"
-user = 1
-state = 2
+    end_date = "2026-12-31"
+    records_to_insert = []
 
-records_to_insert = []
+    for task_id, frequency, start_date, turn in tasks:
+        if not start_date:
+            continue
+            
+        formatted_start_date = start_date.strftime("%Y-%m-%d")
+        
+        # El campo 'turn' de Task se puede usar para asignar un group_id inicial si existe
+        # Por ahora enviamos None o un ID fijo si tienes grupos creados
+        group_id = None 
 
-for task_id, frequency, start_date in tasks:
-    #print(task_id, frequency, start_date)
-    if frequency is None or frequency == '' or frequency == '999':
-        continue  # Saltar si la frecuencia es 999
+        # Generar registros
+        records = insert_task(formatted_start_date, end_date, int(frequency), group_id, state_p_id, task_id)
+        records_to_insert.extend(records)
 
-    #turn = "B" if task_id in tasks_with_turn_b else "A"
-    formatted_start_date = start_date.strftime("%Y-%m-%d")
+    # 3. Insert Query ajustada a los campos del models.py
+    # NOTA: Se omiten campos nullables como comments, reschedule_reason, etc.
+    insert_query = """
+        INSERT INTO works4cdp_taskp (
+            task_id, year, week, day, date, estado_id, 
+            rescheduled, group_id, is_permanent_reschedule, priority
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    """
 
-    # Insertar la tarea con la función insert_task
-    records = insert_task(formatted_start_date, end_date, int(frequency), user, state, task_id)
-    records_to_insert.extend(records)
+    print(f"Insertando {len(records_to_insert)} registros...")
+    
+    # Ejecución por lotes para mayor eficiencia
+    cursor.executemany(insert_query, records_to_insert)
+    connection.commit()
 
-# Insertar registros en la base de datos
-insert_query = """
-    INSERT INTO works4cdp_taskp (
-        year, week, day, date, usuario_id, rescheduled, reschedule_reason,
-        reschedule_date, reschedule_user_id, estado_id, task_id
-    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-"""
-cursor.executemany(insert_query, records_to_insert)
-connection.commit()
+    print("Inserción completada exitosamente.")
 
-print(f"{len(records_to_insert)} registros insertados correctamente en works4cdp_taskp.")
-
-cursor.close()
-connection.close()
+except Exception as error:
+    print(f"Error: {error}")
+finally:
+    if connection:
+        cursor.close()
+        connection.close()
