@@ -2,6 +2,7 @@
 import psycopg2
 # Importamos datetime y timedelta para poder crear y manipular fechas (sumar días, calcular semanas, etc.)
 from datetime import datetime, timedelta
+import argparse
 
 def calcular_semana_extendida(fecha):
     """
@@ -101,25 +102,22 @@ def generar_registros_calendar(fecha_inicio, fecha_fin, patron_de_turnos_fijo, l
     return lista_de_registros_finales
 
 
-# =========================================================
-# --- BLOQUE DE CONFIGURACIÓN MANUAL PARA LAS PRUEBAS ---
-# =========================================================
+def parse_arguments():
+    parser = argparse.ArgumentParser(description='Generar calendario de turnos para grupos.')
+    parser.add_argument(
+        '--fecha_inicio',
+        type=str,
+        help='Fecha de inicio en formato YYYY-MM-DD',
+        default='2025-12-30'
+    )
+    parser.add_argument(
+        '--fecha_fin',
+        type=str,
+        help='Fecha de fin en formato YYYY-MM-DD',
+        default='2027-01-03'
+    )
+    return parser.parse_args()
 
-# Creamos un objeto datetime que representa el inicio absoluto de la simulación del calendario (9 de Marzo de 2026)
-fecha_inicio_de_simulacion = datetime(2026, 3, 9)
-# Creamos un objeto datetime que representa el fin absoluto de la simulación del calendario (26 de Abril de 2026)
-fecha_fin_de_simulacion = datetime(2026, 4, 26)
-
-# Definimos estáticamente un arreglo de 49 elementos que representa la rotación madre ideal de 7 semanas (D=Día, N=Noche, x=Descanso)
-plantilla_patron_de_turnos = [
-    "N", "N", "N", "x", "x", "x", "D",
-    "D", "D", "D", "D", "x", "x", "x",
-    "x", "N", "N", "N", "N", "x", "x",
-    "x", "x", "D", "D", "D", "D", "x",
-    "x", "x", "x", "N", "N", "N", "N",
-    "N", "x", "x", "x", "D", "D", "D",
-    "D", "D", "x", "x", "x", "N", "N"
-]
 
 # =========================================================
 # --- BLOQUE DE EJECUCIÓN PRINCIPAL Y CONEXIÓN A LA BD ---
@@ -128,13 +126,34 @@ plantilla_patron_de_turnos = [
 # Este bloque if garantiza que el código de abajo solo se ejecute si llamamos al archivo directamente, no si lo importamos en otro lado
 if __name__ == "__main__":
     
+    args = parse_arguments()
+    
+    try:
+        # Convertimos los argumentos de texto a objetos datetime
+        fecha_inicio_de_simulacion = datetime.strptime(args.fecha_inicio, '%Y-%m-%d')
+        fecha_fin_de_simulacion = datetime.strptime(args.fecha_fin, '%Y-%m-%d')
+    except ValueError as e:
+        print(f"Error parseando las fechas. Asegúrese de que el formato sea YYYY-MM-DD: {e}")
+        exit(1)
+
+    # Definimos estáticamente un arreglo de 49 elementos que representa la rotación madre ideal de 7 semanas (D=Día, N=Noche, x=Descanso)
+    plantilla_patron_de_turnos = [
+        "N", "N", "N", "x", "x", "x", "D",
+        "D", "D", "D", "D", "x", "x", "x",
+        "x", "N", "N", "N", "N", "x", "x",
+        "x", "x", "D", "D", "D", "D", "x",
+        "x", "x", "x", "N", "N", "N", "N",
+        "N", "x", "x", "x", "D", "D", "D",
+        "D", "D", "x", "x", "x", "N", "N"
+    ]
+    
     # Creamos un objeto "Connection" de psycopg2 apuntando a las credenciales locales de la instancia PostgreSQL
     conexion_base_datos = psycopg2.connect(
         host="localhost",         # Servidor local de PostgreSQL
         database="mydb",          # Nombre explícito de la base de datos
         user="myuser",            # Usuario de la base de datos
         password="mypassword",    # Contraseña en texto plano
-        port=5432                 # Puerto por defecto de PostgreSQL
+        port=5433                 # Puerto por defecto de PostgreSQL
     )
     
     # A partir de la conexión, generamos un cursor. El cursor es el objeto que viaja a la base e inserta u obtiene sentencias SQL
@@ -159,6 +178,7 @@ if __name__ == "__main__":
         else:
             # Mostramos un mensaje informativo indicando sobre cuántos grupos de la BD se hará el cálculo
             print(f"Generando calendario para {len(lista_final_ids_grupos)} grupos encontrados: {lista_final_ids_grupos}")
+            print(f"Desde {fecha_inicio_de_simulacion.strftime('%Y-%m-%d')} hasta {fecha_fin_de_simulacion.strftime('%Y-%m-%d')}")
             
             # Invocamos nuestra función maestra pasando las fechas, el patrón y los IDs reales de la base de datos
             matriz_datos_listos_para_insertar = generar_registros_calendar(
