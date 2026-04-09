@@ -1,144 +1,132 @@
 from datetime import datetime, timedelta
 
-
-def insert_task(start_date, end_date, frec, state, task, gen_start=None):
-    """
-    Genera registros de tareas repetitivas entre gen_start y end_date,
-    respetando la frecuencia definida a partir de start_date.
-
-    Parámetros:
-    - start_date (str): Fecha de inicio de la repetición (formato YYYY-MM-DD)
-    - end_date (str): Fecha límite para generar registros
-    - frec (int): Frecuencia en días
-    - state: Estado de la tarea
-    - task: Identificador de la tarea
-    - gen_start (str, opcional): Fecha desde la cual comenzar a generar. Si no se
-      proporciona, se usa start_date.
-    """
-    # Convertir las fechas de entrada en objetos date
+def insert_task(start_date, end_date, frec, user, state, task, process_start_date=None):
+    # Convertir las fechas de entrada en objetos datetime y luego a date
     start_date_obj = datetime.strptime(start_date, "%Y-%m-%d").date()
     end_date_obj = datetime.strptime(end_date, "%Y-%m-%d").date()
 
-    # Si no se especifica gen_start, se usa start_date_obj
-    if gen_start is None:
-        gen_start_obj = start_date_obj
+    if process_start_date:
+        process_start_date_obj = datetime.strptime(process_start_date, "%Y-%m-%d").date()
     else:
-        gen_start_obj = datetime.strptime(gen_start, "%Y-%m-%d").date()
+        process_start_date_obj = start_date_obj
 
-    # Validación básica
-    if start_date_obj > end_date_obj or gen_start_obj > end_date_obj:
+    if start_date_obj > end_date_obj or process_start_date_obj > end_date_obj:
         return []
 
-    # Parámetros iniciales
+    # Parámetros iniciales de la tarea
+    initial_week = 1  # Número de semana inicial
+    # CORRECCION: Usar el año de inicio para el cálculo base de la semana, no el de fin.
     year = start_date_obj.isocalendar()[0]
-    # Fórmula de número de semana personalizada (se mantiene igual)
-    xweek = start_date_obj.isocalendar()[1] + 6 + ((year - 1963) * 52)
-    frequency = frec
+    #xweek = initial_week + 6 + ((year - 1963) * 52)
 
-    # Días de la semana (de lunes a domingo)
+    start_date = start_date_obj  # Lunes 30 de diciembre
+    xweek = start_date.isocalendar()[1] + 6 + ((year - 1963) * 52)
+    frequency = frec  # Días entre repeticiones
+    end_date = end_date_obj  # Rango final
+    #print(start_date)
+    #print(start_date.isocalendar()[1])
+    # Días de la semana (de lunes a sábado)
     DAYS_OF_WEEK = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
 
-    # --- Función auxiliar para determinar si una fecha es de repetición ---
-    def is_repetition(date):
-        """Usa la misma lógica que el bucle original según la frecuencia."""
-        if frequency < 7:
-            # Condición original (basada en weekday)
-            return (date.weekday() != 6) and ((date.weekday() - start_date_obj.weekday()) % frequency == 0)
-        elif frequency % 7 == 0:
-            # En el bucle original, para múltiplos de 7 se genera en cada fecha que se avanza,
-            # asumiendo que la fecha actual es de repetición. Para la búsqueda inicial,
-            # usamos la condición correcta de días.
-            return (date - start_date_obj).days % frequency == 0
-        else:
-            # Para otros casos, el bucle usa la condición de días
-            return (date - start_date_obj).days % frequency == 0
-
-    # --- Encontrar la primera fecha de repetición >= gen_start_obj ---
-    first_date = max(start_date_obj, gen_start_obj)
-    # Si la primera fecha candidata no es válida, buscar la siguiente que sí lo sea
-    if not is_repetition(first_date):
-        # Buscar día a día hasta encontrar una válida (rango limitado por end_date)
-        while first_date <= end_date_obj and not is_repetition(first_date):
-            first_date += timedelta(days=1)
-        if first_date > end_date_obj:
-            return []  # No hay ninguna fecha válida en el rango
-
-    # --- Configurar variables iniciales para el bucle ---
-    current_date = first_date
-    # Calcular current_week usando la misma fórmula personalizada, pero basada en current_date
-    current_week = current_date.isocalendar()[1] + 6 + ((current_date.year - 1963) * 52)
-
-    aux = 0  # Variable auxiliar que se usa en el bucle original (se mantiene)
+    # Crear registros para la tabla works4cdp_taskp
+    aux=0
     records = []
 
-    # --- Bucle principal (sin modificar la lógica interna) ---
-    while current_date <= end_date_obj:
-        if frequency < 7:
-            # Caso original para frecuencias menores a 7 días
-            if (current_date.weekday() != 6) and ((current_date.weekday() - start_date_obj.weekday()) % frequency == 0):
+    # Cálculo matemático de la fecha y semana inicial para evitar iteraciones innecesarias
+    if process_start_date_obj > start_date:
+        if frequency >= 7 and frequency % 7 == 0:
+            # Para frecuencias múltiplos de 7, los saltos son exactamente de F en F días.
+            delta_days = (process_start_date_obj - start_date).days
+            k = (delta_days + frequency - 1) // frequency  # Cantidad de saltos necesarios para alcanzar o superar la fecha
+            current_date = start_date + timedelta(days=k * frequency)
+            current_week = xweek + k * (frequency // 7)
+        else:
+            # Las demás lógicas se validan día por día; posicionamos current_date exactamente en la nueva fecha de inicio.
+            current_date = process_start_date_obj
+            # Calculamos matemáticamente cuántos domingos han pasado entre la fecha original y la nueva.
+            # Al usar toordinal() // 7, el cociente incrementa matemáticamente exacto al llegar a cada domingo.
+            sundays_passed = (current_date.toordinal() // 7) - (start_date.toordinal() // 7)
+            current_week = xweek + sundays_passed
+    else:
+        current_date = start_date
+        current_week = xweek
+
+
+    while current_date <= end_date:
+        #print("Current date: ", current_date)
+        if frequency<7:
+            #if (current_date.weekday() !=6)&((current_date.weekday()-start_date.weekday())%frequency==0)&(aux<=frequency):
+            if (current_date.weekday() != 6) & ((current_date.weekday() - start_date.weekday()) % frequency == 0):
+
                 day_name = DAYS_OF_WEEK[current_date.weekday()]
-                record = (
+                record=(
                     current_date.year,
                     current_week,
                     day_name,
-                    current_date.strftime("%Y-%m-%d"),
-                    False,
-                    None,
-                    None,
-                    None,
+                    current_date.strftime("%Y-%m-%d"),                
                     state,
                     task,
+                    
                 )
                 records.append(record)
                 current_date += timedelta(days=1)
-                if current_date.weekday() == 6:
+                if current_date.weekday()==6:
                     current_week += 1
-                    aux = 0
-                aux += 1
+                    aux=0
+                aux+=1
             else:
                 current_date += timedelta(days=1)
-                if current_date.weekday() == 6:
+                if current_date.weekday()==6:
                     current_week += 1
                     aux = 0
+
         else:
-            aux = 0
-            if frequency % 7 == 0:
-                # Frecuencia múltiplo de 7: avanzar de a frequency días
+            aux=0
+            if frequency%7==0:
                 day_name = DAYS_OF_WEEK[current_date.weekday()]
-                record = (
+                record=(
                     current_date.year,
                     current_week,
                     day_name,
                     current_date.strftime("%Y-%m-%d"),
-                    False,
-                    None,
-                    None,
-                    None,
                     state,
                     task,
+                    
                 )
                 records.append(record)
                 current_date += timedelta(days=frequency)
+                    #if current_date.weekday()==6:
                 current_week += frequency // 7
             else:
-                # Frecuencia mayor a 7 pero no múltiplo: iterar día a día
-                if (current_date.weekday() != 6) and ((current_date - start_date_obj).days % frequency == 0):
+                if (current_date.weekday() != 6) and ((current_date - start_date).days % frequency == 0):
                     day_name = DAYS_OF_WEEK[current_date.weekday()]
                     record = (
                         current_date.year,
                         current_week,
                         day_name,
                         current_date.strftime("%Y-%m-%d"),
-                        False,
-                        None,
-                        None,
-                        None,
                         state,
                         task,
                     )
                     records.append(record)
                 current_date += timedelta(days=1)
-                if current_date.weekday() == 6:
+                if current_date.weekday()==6:
                     current_week += 1
 
+
+    #record = xweek
     return records
+
+# # Ejemplo de uso
+# start_date = "2025-01-25"
+# end_date = "2025-04-08"
+# frecuency = 70
+# turn = "A"
+# user = 1
+# state = 2
+# task = 1
+#
+# records = insert_task(start_date, end_date, frecuency, turn, user, state, task)
+# # Verificar los registros generados
+# for record in records[:150]:  # Muestra solo los primeros 10 registros
+#     print(record)

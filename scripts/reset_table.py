@@ -14,7 +14,7 @@ def reset_table():
         cursor = connection.cursor()
         
         print("Truncating table works4cdp_taskgroupassignment...")
-        cursor.execute("TRUNCATE TABLE works4cdp_taskgroupassignment RESTART IDENTITY CASCADE;")
+        cursor.execute("TRUNCATE TABLE works4cdp_taskp RESTART IDENTITY CASCADE;")
         print("Table truncated and index reset successfully.")
         
         cursor.close()

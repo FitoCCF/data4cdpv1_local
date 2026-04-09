@@ -30,7 +30,8 @@ def poblar_task_group_assignment():
                     SELECT tp.id, c.id
                     FROM works4cdp_taskp tp
                              JOIN works4cdp_task t ON tp.task_id = t.id
-                             JOIN works4cdp_calendar c ON tp.date = c.date AND t.turn = c.turn
+                             JOIN works4cdp_calendar c ON tp.date = c.date 
+                                  AND (t.turn = c.turn OR (t.turn = 'AB' AND c.turn IN ('A', 'B')))
                     WHERE c.group_id IS NOT NULL
                       AND NOT EXISTS (SELECT 1 \
                                       FROM works4cdp_taskgroupassignment tga \

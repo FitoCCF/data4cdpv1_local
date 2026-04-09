@@ -138,13 +138,13 @@ if __name__ == "__main__":
 
     # Definimos estáticamente un arreglo de 49 elementos que representa la rotación madre ideal de 7 semanas (D=Día, N=Noche, x=Descanso)
     plantilla_patron_de_turnos = [
-        "N", "N", "N", "x", "x", "x", "D",
-        "D", "D", "D", "D", "x", "x", "x",
-        "x", "N", "N", "N", "N", "x", "x",
-        "x", "x", "D", "D", "D", "D", "x",
-        "x", "x", "x", "N", "N", "N", "N",
-        "N", "x", "x", "x", "D", "D", "D",
-        "D", "D", "x", "x", "x", "N", "N"
+        "B", "B", "B", "x", "x", "x", "A",
+        "A", "A", "A", "A", "x", "x", "x",
+        "x", "B", "B", "B", "B", "x", "x",
+        "x", "x", "A", "A", "A", "A", "x",
+        "x", "x", "x", "B", "B", "B", "B",
+        "B", "x", "x", "x", "A", "A", "A",
+        "A", "A", "x", "x", "x", "B", "B"
     ]
     
     # Creamos un objeto "Connection" de psycopg2 apuntando a las credenciales locales de la instancia PostgreSQL

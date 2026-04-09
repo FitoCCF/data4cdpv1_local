@@ -24,8 +24,10 @@ cursor.execute(query)
 tasks = cursor.fetchall()
 print(tasks)
 
-sdate = "2026-03-23"
-end_date = "2026-03-23"
+
+# Fecha de inicio a partir de la cual se van a procesar las tareas matemáticamente
+process_start_date = "2026-04-06"
+end_date = "2026-04-12"
 user = 1
 state = 2
 
@@ -39,16 +41,16 @@ for task_id, frequency, start_date in tasks:
     #turn = "B" if task_id in tasks_with_turn_b else "A"
     formatted_start_date = start_date.strftime("%Y-%m-%d")
 
-    # Insertar la tarea con la función insert_task
-    records = insert_task(formatted_start_date, end_date, int(frequency), state, task_id, sdate)
+    # Insertar la tarea enviando la nueva variable de inicio del proceso
+    records = insert_task(formatted_start_date, end_date, int(frequency), user, state, task_id, process_start_date)
     records_to_insert.extend(records)
 
 # Insertar registros en la base de datos
 insert_query = """
     INSERT INTO works4cdp_taskp (
-        year, week, day, date, rescheduled, reschedule_reason,
-        reschedule_date, reschedule_user_id, estado_id, task_id
-    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        year, week, day, date, estado_id, task_id,
+        rescheduled, is_permanent_reschedule, priority
+    ) VALUES (%s, %s, %s, %s, %s, %s, False, False, 1)
 """
 cursor.executemany(insert_query, records_to_insert)
 connection.commit()
