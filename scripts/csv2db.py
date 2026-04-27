@@ -1,127 +1,182 @@
-
 import pandas as pd
 import psycopg2
 import numpy as np
+import os
 
 def update_assays_from_csv(csv_path: str, db_config: dict):
-    """
-    Actualiza la tabla 'works4cdp_assay' con datos del CSV.
-    Ignora los segundos en el cruce de la hora y busca el sample_id en base 
-    a la combinación de MUESTRA y CODIGO_MUESTRA.
-    """
-    # 1. Conectar a la base de datos de PostgreSQL (expuesta por el contenedor data4cdpv1-backend-1)
+    # 1. Conectar a la base de datos PostgreSQL usando el diccionario de credenciales
     conn = psycopg2.connect(**db_config)
+    # Creamos el cursor para poder ejecutar comandos SQL
     cursor = conn.cursor()
 
     try:
-        # 2. Obtener el mapeo de (name, tag) -> id del modelo Sample
-        # Django genera la tabla con el nombre appname_modelname (works4cdp_sample)
-        cursor.execute("SELECT id, name, tag FROM works4cdp_sample;")
-        samples = cursor.fetchall()
-        
-        # Diccionario para buscar sample_id rápidamente: {(MUESTRA, CODIGO_MUESTRA): id}
-        sample_map = {(name, tag): sample_id for sample_id, name, tag in samples}
-
-        # 3. Leer el CSV con Pandas
+        # 2. Leer el archivo CSV completo en memoria utilizando la librería pandas
         df = pd.read_csv(csv_path)
         
-        # 4. Limpieza y procesamiento de Fechas y Horas
-        # Reemplazamos puntos por dos puntos por si hay horas con formato erróneo (Ej: '11.06')
+        # 3. Limpiar espacios en blanco al principio y al final de MUESTRA y CODIGO_MUESTRA
+        df['MUESTRA'] = df['MUESTRA'].astype(str).str.strip()
+        df['CODIGO_MUESTRA'] = df['CODIGO_MUESTRA'].astype(str).str.strip()
+
+        # 4. Corregir formato de horas (ej. cambiar un punto '11.06' a dos puntos '11:06')
         df['time'] = df['time'].astype(str).str.replace('.', ':')
         
-        # Parseamos la hora y extraemos explícitamente el formato HH:MM (ignorando segundos)
+        # 5. Parsear la hora para extraerla estrictamente en formato HH:MM (ignorando los segundos)
         df['time_hhmm'] = pd.to_datetime(df['time'], format='mixed').dt.strftime('%H:%M')
         
-        # Aseguramos el formato de la fecha en YYYY-MM-DD
+        # 6. Parsear la fecha para asegurar que siempre use el formato estándar de base de datos AAAA-MM-DD
         df['date'] = pd.to_datetime(df['date'], format='mixed').dt.strftime('%Y-%m-%d')
 
-        # Reemplazar NaN con None para que psycopg2 lo inyecte como NULL en PostgreSQL
+        # 7. Reemplazar valores vacíos (NaN) del CSV por "None" para que se inserten como NULL reales en PostgreSQL
         df = df.replace({np.nan: None})
 
-        # 5. Consulta SQL paramétrica para actualizar
-        # Nota: En PostgreSQL, los nombres de campo con mayúsculas generados por Django (pFe) 
-        # deben ir entre comillas dobles ("pFe") para evitar que la base de datos los pase a minúsculas.
-        update_query = """
-            UPDATE works4cdp_assay
-            SET 
-                tara = %s,
-                tweight = %s,
-                dweight = %s,
-                pweight = %s,
-                chemical_id = %s,
-                "pFe" = %s,
-                "pCu" = %s,
-                "pZn" = %s,
-                "pMo" = %s,
-                "pIns" = %s,
-                "pSol" = %s
-            WHERE 
-                date = %s 
-                AND to_char(time, 'HH24:MI') = %s -- Ignora segundos en la BD ('15:23:00' -> '15:23')
-                AND sample_id = %s;
-        """
-
+        # Inicializamos listas para agrupar las filas que tienen éxito y las que fallan
+        success_rows = []
+        failed_rows = []
+        # Inicializamos el contador visual de cuántos registros logramos actualizar
         updated_count = 0
+        
+        # Tupla restrictiva que solo permite consultar estos identificadores en la tabla sample
+        ids_permitidos = (17, 18, 19, 20, 21, 22, 23, 24, 25, 26)
 
-        # 6. Iterar sobre el DataFrame y ejecutar los updates
+        # 8. Bucle principal que recorrerá una a una cada fila del dataframe de pandas
         for _, row in df.iterrows():
-            # Buscar el ID de la muestra combinando columnas del CSV
-            muestra_key = (row['MUESTRA'], row['CODIGO_MUESTRA'])
-            sample_id = sample_map.get(muestra_key)
-
-            if not sample_id:
-                print(f"Advertencia: No se encontró Sample {muestra_key} en la BD. Omitiendo fila de fecha {row['date']}.")
+            
+            # PASO 1: Leer los datos clave (fecha, hora, muestra, código) de la fila actual del CSV
+            csv_date = row['date']
+            csv_time = row['time_hhmm']
+            csv_muestra = str(row['MUESTRA']).strip()
+            csv_codigo = str(row['CODIGO_MUESTRA']).strip()
+            
+            # PASO 2: Buscar en la base de datos (works4cdp_assay) si existe un ensayo que coincida con esa fecha y hora, permitiendo solo los sample_ids de la tupla
+            query_buscar_fecha_hora = "SELECT id, sample_id FROM works4cdp_assay WHERE date = %s AND to_char(time, 'HH24:MI') = %s AND sample_id IN %s;"
+            # Ejecutamos la consulta inyectando de forma segura la fecha, hora y la tupla de IDs
+            cursor.execute(query_buscar_fecha_hora, (csv_date, csv_time, ids_permitidos))
+            # Obtenemos todos los ensayos que se hayan creado en esa misma fecha y hora (pueden ser varios)
+            ensayos_encontrados = cursor.fetchall()
+            
+            # Si no devolvió nada, entonces sabemos que falló en el primer paso (No hay fecha/hora)
+            if not ensayos_encontrados:
+                # Hacemos una copia de la fila original para no alterar el dataframe madre
+                fila_fallida = row.copy()
+                # Agregamos la nueva columna indicando que la hora, fecha o el ID son los culpables
+                fila_fallida['motivo_error'] = f"Fallo Fecha/Hora/ID: No existe ensayo válido (IDs 17-26) el {csv_date} a las {csv_time}."
+                # Se añade a la lista de registros fallidos y saltamos a procesar la siguiente fila
+                failed_rows.append(fila_fallida)
                 continue
-
-            # Valores a inyectar en la consulta (en el mismo orden que los %s)
-            values = (
-                # Valores del SET
-                row['tara'],
-                row['tweight'],
-                row['dweight'],
-                row['pweight'],
-                row['chemical_id'],
-                row['%Fe'],
-                row['%Cu'],
-                row['%Zn'],
-                row['%Mo'],
-                row['%Ins'],
-                row['pSol'],
+            
+            # Creamos una bandera (flag) para registrar si logramos el éxito en esta fila
+            fue_actualizado = False
+            # Lista de apoyo para guardar el diagnóstico de qué muestras sí estaban en esa hora
+            diagnostico_muestras = []
+            
+            # PASO 3: De los ensayos encontrados a esa hora, vamos a verificar el valor de la muestra
+            for assay_id, sample_id in ensayos_encontrados:
                 
-                # Valores del WHERE
-                row['date'],
-                row['time_hhmm'], 
-                sample_id
-            )
+                # Con el sample_id válido, vamos a la tabla sample a obtener el nombre real y el código
+                query_buscar_muestra = "SELECT name, tag FROM works4cdp_sample WHERE id = %s;"
+                # Ejecutamos la búsqueda de forma segura
+                cursor.execute(query_buscar_muestra, (sample_id,))
+                # Obtenemos la única fila resultante
+                datos_muestra_bd = cursor.fetchone()
+                
+                if datos_muestra_bd:
+                    # Limpiamos espacios del nombre y tag que nos devolvió la base de datos
+                    db_muestra_nombre = str(datos_muestra_bd[0]).strip()
+                    db_muestra_codigo = str(datos_muestra_bd[1]).strip()
+                    
+                    # PASO 4: Comparamos el nombre y código de la BD contra los del archivo CSV
+                    if db_muestra_nombre == csv_muestra and db_muestra_codigo == csv_codigo:
+                        
+                        # Si son idénticos, PASO 5: preparamos el SQL de actualización con el assay_id exacto
+                        update_query = """
+                            UPDATE works4cdp_assay
+                            SET 
+                                tara = %s, tweight = %s, dweight = %s, pweight = %s,
+                                chemical_id = %s, "pFe" = %s, "pCu" = %s, "pZn" = %s,
+                                "pMo" = %s, "pIns" = %s, "pSol" = %s
+                            WHERE id = %s;
+                        """
+                        
+                        # Empaquetamos los valores exactos requeridos de la fila en orden
+                        valores_actualizacion = (
+                            row['tara'], row['tweight'], row['dweight'], row['pweight'],
+                            row['chemical_id'], row['%Fe'], row['%Cu'], row['%Zn'],
+                            row['%Mo'], row['%Ins'], row['pSol'], 
+                            assay_id # Le damos el ID real obtenido del SELECT inicial
+                        )
+                        
+                        # Ejecutamos el comando UPDATE en la base de datos
+                        cursor.execute(update_query, valores_actualizacion)
+                        
+                        # Sumamos 1 al contador global de actualizaciones exitosas
+                        updated_count += 1
+                        # Marcamos la bandera como Verdadera
+                        fue_actualizado = True
+                        
+                        # Copiamos la fila para el archivo de éxitos
+                        fila_exitosa = row.copy()
+                        # Removemos el motivo de error si es que se reprocesaba
+                        if 'motivo_error' in fila_exitosa:
+                            del fila_exitosa['motivo_error']
+                        # Se guarda en la lista de éxitos
+                        success_rows.append(fila_exitosa)
+                        
+                        # Terminamos este bucle 'for' ya que logramos encontrar la muestra correcta
+                        break
+                    else:
+                        # Si el nombre no coincidía, guardamos en la memoria qué nombre tenía para el reporte final
+                        diagnostico_muestras.append(f"{db_muestra_nombre} [{db_muestra_codigo}]")
+            
+            # PASO 6: Si al finalizar de revisar todos los ensayos de esa hora no se actualizó nada...
+            if not fue_actualizado:
+                # Clonamos la fila original
+                fila_fallida = row.copy()
+                # Escribimos un mensaje con el contexto de qué falló (la Muestra / El Código)
+                if diagnostico_muestras:
+                    fila_fallida['motivo_error'] = f"Fallo Muestra/Código: A esa hora existen las muestras {diagnostico_muestras}, pero no '{csv_muestra}' ['{csv_codigo}']."
+                else:
+                    fila_fallida['motivo_error'] = "Fallo Muestra/Código: La muestra del CSV no coincide con las registradas a esta hora."
+                # Agregamos esta fila al contenedor de fallidos
+                failed_rows.append(fila_fallida)
 
-            cursor.execute(update_query, values)
-            updated_count += cursor.rowcount # Sumamos 1 si encontró coincidencia, 0 si no
-
-        # 7. Confirmar cambios
+        # 9. Confirmar todos los cambios (si no hubo errores en el ciclo, se aplica el commit masivo)
         conn.commit()
-        print(f"Proceso finalizado. Se actualizaron {updated_count} registros en works4cdp_assay.")
+        # Imprimimos el log en la consola
+        print(f"Proceso finalizado. Se actualizaron exitosamente {updated_count} registros en works4cdp_assay.")
+
+        # 10. Dividir las rutas para preparar los nombres de los nuevos CSVs
+        base_path, ext = os.path.splitext(csv_path)
+        success_csv_path = f"{base_path}_exitosos{ext}"
+        failed_csv_path = f"{base_path}_fallidos{ext}"
+        
+        # Exportar las filas que se lograron inyectar
+        if success_rows:
+            pd.DataFrame(success_rows).to_csv(success_csv_path, index=False)
+            print(f"Archivo de éxitos generado: {success_csv_path}")
+        
+        # Exportar las filas que no lograron inyectarse
+        if failed_rows:
+            pd.DataFrame(failed_rows).to_csv(failed_csv_path, index=False)
+            print(f"Archivo de fallos generado: {failed_csv_path}")
 
     except Exception as e:
-        conn.rollback() # Revertir si hay un error fatal
+        # Si en cualquier punto hubo un fallo de ejecución en la base de datos (e.g. timeout), deshacer.
+        conn.rollback()
         print(f"Error crítico durante la actualización: {e}")
     finally:
+        # Garantizar cerrar las conexiones y cursores para no saturar memoria en PostgreSQL
         cursor.close()
         conn.close()
 
-
 if __name__ == "__main__":
-    # Ruta al archivo (relativa a donde se ejecute el script)
-    CSV_PATH = "/home/fito/Proyects/data4cdpv1_local/data/processed/data_cobre_c2v3.csv"
+    CSV_PATH = "/home/daigo/data4cdpv1_local/data/processed/data_cobre_c2v3.csv"
     
-    # Credenciales de base de datos
-    # Como corre fuera de Django y backend corre en contenedor, apunta a 'localhost' 
-    # o a la IP local expuesta del servicio postgres de tu docker-compose.
     DB_CONFIG = {
-        "dbname": "mydb",   # Reemplazar con el nombre real de tu base de datos
-        "user": "myuser",           # Reemplazar con tu user de postgres
-        "password": "mypassword",      # Reemplazar con tu contraseña de postgres
-        "host": "localhost",            # IP local expuesta en tu host
-        "port": 5432                    # Puerto local mapeado al contenedor
+        "dbname": "mydb",
+        "user": "myuser",
+        "password": "mypassword",
+        "host": "localhost",
+        "port": 5433
     }
     
     update_assays_from_csv(CSV_PATH, DB_CONFIG)
