@@ -26,8 +26,8 @@ print(tasks)
 
 
 # Fecha de inicio a partir de la cual se van a procesar las tareas matemáticamente
-process_start_date = "2026-04-06"
-end_date = "2026-04-12"
+process_start_date = "2026-01-19"
+end_date = "2027-01-03"
 user = 1
 state = 2
 

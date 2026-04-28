@@ -108,7 +108,7 @@ def parse_arguments():
         '--fecha_inicio',
         type=str,
         help='Fecha de inicio en formato YYYY-MM-DD',
-        default='2025-12-30'
+        default='2026-01-19'
     )
     parser.add_argument(
         '--fecha_fin',
@@ -145,6 +145,8 @@ if __name__ == "__main__":
         "x", "x", "x", "B", "B", "B", "B",
         "B", "x", "x", "x", "A", "A", "A",
         "A", "A", "x", "x", "x", "B", "B"
+    
+
     ]
     
     # Creamos un objeto "Connection" de psycopg2 apuntando a las credenciales locales de la instancia PostgreSQL
