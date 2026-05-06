@@ -169,14 +169,14 @@ def update_assays_from_csv(csv_path: str, db_config: dict):
         conn.close()
 
 if __name__ == "__main__":
-    CSV_PATH = "/home/daigo/data4cdpv1_local/data/processed/data_cobre_c2v3.csv"
+    CSV_PATH = "/home/fito/Proyects/data4cdpv1_local/data/processed/data_cobre_c2v3.csv"
     
     DB_CONFIG = {
         "dbname": "mydb",
         "user": "myuser",
         "password": "mypassword",
         "host": "localhost",
-        "port": 5433
+        "port": 5432
     }
     
     update_assays_from_csv(CSV_PATH, DB_CONFIG)
