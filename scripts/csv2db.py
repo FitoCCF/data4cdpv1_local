@@ -48,10 +48,13 @@ def update_assays_from_csv(csv_path: str, db_config: dict):
             csv_codigo = str(row['CODIGO_MUESTRA']).strip()
             
             # PASO 2: Buscar en la base de datos (works4cdp_assay) si existe un ensayo que coincida con esa fecha y hora, permitiendo solo los sample_ids de la tupla
-            query_buscar_fecha_hora = "SELECT id, sample_id FROM works4cdp_assay WHERE date = %s AND to_char(time, 'HH24:MI') = %s AND sample_id IN %s;"
-            # Ejecutamos la consulta inyectando de forma segura la fecha, hora y la tupla de IDs
+            query_buscar_fecha_hora = """
+                SELECT a.id, s.name, s.tag 
+                FROM works4cdp_assay a
+                JOIN works4cdp_sample s ON a.sample_id = s.id
+                WHERE a.date = %s AND to_char(a.time, 'HH24:MI') = %s AND a.sample_id IN %s;
+            """
             cursor.execute(query_buscar_fecha_hora, (csv_date, csv_time, ids_permitidos))
-            # Obtenemos todos los ensayos que se hayan creado en esa misma fecha y hora (pueden ser varios)
             ensayos_encontrados = cursor.fetchall()
             
             # Si no devolvió nada, entonces sabemos que falló en el primer paso (No hay fecha/hora)
@@ -70,22 +73,14 @@ def update_assays_from_csv(csv_path: str, db_config: dict):
             diagnostico_muestras = []
             
             # PASO 3: De los ensayos encontrados a esa hora, vamos a verificar el valor de la muestra
-            for assay_id, sample_id in ensayos_encontrados:
+            for assay_id, db_name, db_tag in ensayos_encontrados:
                 
-                # Con el sample_id válido, vamos a la tabla sample a obtener el nombre real y el código
-                query_buscar_muestra = "SELECT name, tag FROM works4cdp_sample WHERE id = %s;"
-                # Ejecutamos la búsqueda de forma segura
-                cursor.execute(query_buscar_muestra, (sample_id,))
-                # Obtenemos la única fila resultante
-                datos_muestra_bd = cursor.fetchone()
+                # Limpiamos espacios del nombre y tag que nos devolvió la base de datos
+                db_muestra_nombre = str(db_name).strip()
+                db_muestra_codigo = str(db_tag).strip()
                 
-                if datos_muestra_bd:
-                    # Limpiamos espacios del nombre y tag que nos devolvió la base de datos
-                    db_muestra_nombre = str(datos_muestra_bd[0]).strip()
-                    db_muestra_codigo = str(datos_muestra_bd[1]).strip()
-                    
-                    # PASO 4: Comparamos el nombre y código de la BD contra los del archivo CSV
-                    if db_muestra_nombre == csv_muestra and db_muestra_codigo == csv_codigo:
+                # PASO 4: Comparamos el nombre y código de la BD contra los del archivo CSV
+                if db_muestra_nombre == csv_muestra and db_muestra_codigo == csv_codigo:
                         
                         # Si son idénticos, PASO 5: preparamos el SQL de actualización con el assay_id exacto
                         update_query = """
@@ -123,9 +118,9 @@ def update_assays_from_csv(csv_path: str, db_config: dict):
                         
                         # Terminamos este bucle 'for' ya que logramos encontrar la muestra correcta
                         break
-                    else:
-                        # Si el nombre no coincidía, guardamos en la memoria qué nombre tenía para el reporte final
-                        diagnostico_muestras.append(f"{db_muestra_nombre} [{db_muestra_codigo}]")
+                else:
+                    # Si el nombre no coincidía, guardamos en la memoria qué nombre tenía para el reporte final
+                    diagnostico_muestras.append(f"{db_muestra_nombre} [{db_muestra_codigo}]")
             
             # PASO 6: Si al finalizar de revisar todos los ensayos de esa hora no se actualizó nada...
             if not fue_actualizado:
