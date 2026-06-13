@@ -138,6 +138,8 @@ DB_COLUMNS: Tuple[str, ...] = (
     "a5a5",       # Valor del campo a5a5.
     "a6sol",      # Valor del campo a6sol.
     "a7a7",       # Valor del campo a7a7.
+    "timestamp",  # Timestamp requerido por TimescaleDB.
+
 )
 
 
@@ -197,6 +199,15 @@ def build_row(entry: Mapping[str, Any], sample_id: int) -> Dict[str, Any]:
             # En este contexto, si falla un campo, quizás queramos seguir o poner None. 
             # Mantendremos el comportamiento original de re-lanzar para ser seguros.
             raise
+
+        # Calculamos el campo timestamp concatenando date y time para TimescaleDB
+        date_val = row.get("date")
+        time_val = row.get("time") or "00:00:00"
+        if date_val:
+            row["timestamp"] = f"{date_val} {time_val}.000000 +00:00"
+        else:
+            logging.error("Falta 'date' para sample_id %s, ignorando registro por restricción de TimescaleDB.", sample_id)
+            raise ValueError("Missing 'date' field")
 
     return row  # Devolvemos el diccionario listo para insertar.
 
