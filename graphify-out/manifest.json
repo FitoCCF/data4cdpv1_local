@@ -1,0 +1,67 @@
+{
+  "add_cells.py": {
+    "mtime": 1777866809.8802228,
+    "ast_hash": "79edc658dc72ff8361869afb1b184496",
+    "semantic_hash": "79edc658dc72ff8361869afb1b184496"
+  },
+  "scripts/api2db.py": {
+    "mtime": 1781345627.8273344,
+    "ast_hash": "de2b120500ce8db41e9d67cc950eedc5",
+    "semantic_hash": "de2b120500ce8db41e9d67cc950eedc5"
+  },
+  "scripts/assign_tasks.py": {
+    "mtime": 1776962567.5389013,
+    "ast_hash": "124d8c6f7354fcb5d3d9a20f3bbf9951",
+    "semantic_hash": "124d8c6f7354fcb5d3d9a20f3bbf9951"
+  },
+  "scripts/concentado.py": {
+    "mtime": 1777350473.7009444,
+    "ast_hash": "affd4ea96fde2d3c2637da09e40e2037",
+    "semantic_hash": "affd4ea96fde2d3c2637da09e40e2037"
+  },
+  "scripts/csv2db.py": {
+    "mtime": 1778478559.9008095,
+    "ast_hash": "5eeec5b6e2f6e600e2ee67f539d37cb8",
+    "semantic_hash": "5eeec5b6e2f6e600e2ee67f539d37cb8"
+  },
+  "scripts/generar_calendario.py": {
+    "mtime": 1777865645.3651605,
+    "ast_hash": "336641cf68c2a0dea9a46517d86c1a33",
+    "semantic_hash": "336641cf68c2a0dea9a46517d86c1a33"
+  },
+  "scripts/reset_table.py": {
+    "mtime": 1776962567.5389013,
+    "ast_hash": "449d72cb4f82dc8eb8b7645ab1414adc",
+    "semantic_hash": "449d72cb4f82dc8eb8b7645ab1414adc"
+  },
+  "scripts/taskpx.py": {
+    "mtime": 1776962567.5389013,
+    "ast_hash": "7f62938c8790bbb43987400c8d9ac36e",
+    "semantic_hash": "7f62938c8790bbb43987400c8d9ac36e"
+  },
+  "scripts/userp.py": {
+    "mtime": 1772396273.3343234,
+    "ast_hash": "f7ead53dcef353ef388d5c71d7656868",
+    "semantic_hash": "f7ead53dcef353ef388d5c71d7656868"
+  },
+  "scripts/userp1.py": {
+    "mtime": 1772396273.3343234,
+    "ast_hash": "fb92e868df09306db9b3b22299877109",
+    "semantic_hash": "fb92e868df09306db9b3b22299877109"
+  },
+  "scripts/wsl2sharepoint.py": {
+    "mtime": 1777865645.3651605,
+    "ast_hash": "8011024e024f622ef8d5787fa46e65ff",
+    "semantic_hash": "8011024e024f622ef8d5787fa46e65ff"
+  },
+  "scripts/xtaskp.py": {
+    "mtime": 1777865645.3651605,
+    "ast_hash": "22e37fa76b89def125735933697f0d3b",
+    "semantic_hash": "22e37fa76b89def125735933697f0d3b"
+  },
+  "taskp_users.sql": {
+    "mtime": 1776962567.5389013,
+    "ast_hash": "1291e3d9b30b2017c3b562d45f2e1ee7",
+    "semantic_hash": "1291e3d9b30b2017c3b562d45f2e1ee7"
+  }
+}

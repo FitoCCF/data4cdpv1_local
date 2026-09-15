@@ -1,0 +1,169 @@
+{
+  "communities": {
+    "0": [
+      "any",
+      "scripts_api2db_build_row",
+      "scripts_api2db_collect_rows",
+      "scripts_api2db_fetch_entries",
+      "scripts_api2db_load_samples_config",
+      "scripts_api2db_rationale_159",
+      "scripts_api2db_rationale_175",
+      "scripts_api2db_rationale_238",
+      "scripts_api2db_rationale_268",
+      "session"
+    ],
+    "1": [
+      "scripts_api2db",
+      "scripts_api2db_clean_string",
+      "scripts_api2db_parse_date",
+      "scripts_api2db_parse_float",
+      "scripts_api2db_parse_int",
+      "scripts_api2db_parse_time",
+      "scripts_api2db_rationale_148",
+      "scripts_api2db_rationale_53",
+      "scripts_api2db_rationale_71"
+    ],
+    "2": [
+      "scripts_api2db_insert_rows",
+      "scripts_api2db_load_db_settings",
+      "scripts_api2db_load_existing_keys",
+      "scripts_api2db_main",
+      "scripts_api2db_rationale_217",
+      "scripts_api2db_rationale_253",
+      "scripts_api2db_rationale_313"
+    ],
+    "3": [
+      "scripts_generar_calendario",
+      "scripts_generar_calendario_calcular_semana_extendida",
+      "scripts_generar_calendario_generar_registros_calendar",
+      "scripts_generar_calendario_parse_arguments",
+      "scripts_generar_calendario_rationale_28",
+      "scripts_generar_calendario_rationale_8"
+    ],
+    "4": [
+      "scripts_taskpx",
+      "scripts_taskpx_insert_task",
+      "scripts_xtaskp"
+    ],
+    "5": [
+      "scripts_assign_tasks",
+      "scripts_assign_tasks_poblar_task_group_assignment"
+    ],
+    "6": [
+      "scripts_csv2db",
+      "scripts_csv2db_update_assays_from_csv"
+    ],
+    "7": [
+      "scripts_reset_table",
+      "scripts_reset_table_reset_table"
+    ],
+    "8": [
+      "scripts_userp",
+      "scripts_userp_generar_horario_personalizado"
+    ],
+    "9": [
+      "add_cells"
+    ],
+    "10": [
+      "scripts_concentado"
+    ],
+    "11": [
+      "scripts_userp1"
+    ],
+    "12": [
+      "scripts_wsl2sharepoint"
+    ]
+  },
+  "cohesion": {
+    "0": 0.28888888888888886,
+    "1": 0.3333333333333333,
+    "2": 0.2857142857142857,
+    "3": 0.4,
+    "4": 1.0,
+    "5": 1.0,
+    "6": 1.0,
+    "7": 1.0,
+    "8": 1.0,
+    "9": 1.0,
+    "10": 1.0,
+    "11": 1.0,
+    "12": 1.0
+  },
+  "gods": [
+    {
+      "id": "scripts_api2db_collect_rows",
+      "label": "collect_rows()",
+      "degree": 8
+    },
+    {
+      "id": "scripts_api2db_clean_string",
+      "label": "clean_string()",
+      "degree": 6
+    },
+    {
+      "id": "scripts_api2db_main",
+      "label": "main()",
+      "degree": 6
+    },
+    {
+      "id": "scripts_api2db_fetch_entries",
+      "label": "fetch_entries()",
+      "degree": 5
+    },
+    {
+      "id": "scripts_api2db_build_row",
+      "label": "build_row()",
+      "degree": 4
+    },
+    {
+      "id": "scripts_api2db_insert_rows",
+      "label": "insert_rows()",
+      "degree": 4
+    },
+    {
+      "id": "scripts_api2db_load_samples_config",
+      "label": "load_samples_config()",
+      "degree": 4
+    },
+    {
+      "id": "scripts_api2db_load_existing_keys",
+      "label": "load_existing_keys()",
+      "degree": 4
+    },
+    {
+      "id": "scripts_api2db_load_db_settings",
+      "label": "load_db_settings()",
+      "degree": 4
+    },
+    {
+      "id": "scripts_api2db_parse_date",
+      "label": "parse_date()",
+      "degree": 3
+    }
+  ],
+  "surprises": [
+    {
+      "source": "main()",
+      "target": "Session",
+      "source_files": [
+        "scripts/api2db.py",
+        ""
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "calls",
+      "note": "Bridges community 0 → community 2"
+    }
+  ],
+  "questions": [
+    {
+      "type": "bridge_node",
+      "question": "Why does `collect_rows()` connect `collect_rows` to `api2db.py`, `main`?",
+      "why": "High betweenness centrality (0.038) - this node is a cross-community bridge."
+    },
+    {
+      "type": "bridge_node",
+      "question": "Why does `fetch_entries()` connect `collect_rows` to `api2db.py`?",
+      "why": "High betweenness centrality (0.028) - this node is a cross-community bridge."
+    }
+  ]
+}
