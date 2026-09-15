@@ -6,7 +6,8 @@ Abstracción Orientada a Objetos (OOP) para la adquisición de datos:
 - Modo DEV: ExcelOfflineProvider (Laptop Slackware sin acceso a red ni PI Gateway).
   Carga los 31 días de datos históricos reales almacenados en 'Courier_AUTO-C2.xlsm'.
 - Modo PROD: PiGatewayProvider (WSL2 Debian Linux con acceso a la API PI Gateway).
-  Consulta en vivo mediante 'scripts/pi_client.py'.
+  Consulta en vivo mediante 'scripts/pi_client.py' con caché en memoria y
+  alineamiento exacto de los turnos operativos A (18:30 / 07:30) y B (06:30 / 19:30).
 
 Totalmente aislado del proyecto principal (sin acceso a bases de datos).
 """
@@ -15,6 +16,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 import os
 from typing import Dict, List, Optional
+import numpy as np
 import openpyxl
 import pandas as pd
 
@@ -36,10 +38,10 @@ class CourierDataProvider(ABC):
         Columnas requeridas:
         - 'date': Fecha del turno (datetime.date)
         - 'shift': 'A' (Día) o 'B' (Noche)
-        - 'timestamp_cour': Fecha y hora de integración del Courier
-        - 'timestamp_lab': Fecha y hora de entrega de ensaye de Laboratorio
-        - 'val_cour': Ley medida por el analizador Courier (% en peso)
-        - 'val_lab': Ley certificada por el Laboratorio Químico (% en peso)
+        - 'timestamp_cour': Fecha y hora de integración del Courier (datetime)
+        - 'timestamp_lab': Fecha y hora de entrega de ensaye de Laboratorio (datetime)
+        - 'val_cour': Ley medida por el analizador Courier (% en peso, float o None)
+        - 'val_lab': Ley certificada por el Laboratorio Químico (% en peso, float o None)
         """
         pass
 
@@ -48,16 +50,12 @@ class CourierDataProvider(ABC):
         Extrae todos los pares de datos para una planta ('Cobre' o 'Moly').
         Retorna un diccionario anidado: dict[stream_id][element_name] -> DataFrame
         """
-        # Selecciona el catálogo correspondiente a la planta
         streams = STREAMS_COBRE if plant.lower() == "cobre" else STREAMS_MOLY
         resultado = {}
 
-        # Itera sobre cada corriente configurada
         for stream_id, s_cfg in streams.items():
             resultado[stream_id] = {}
-            # Itera sobre cada elemento analizado en la corriente
             for elem_name in s_cfg.elements.keys():
-                # Extrae el DataFrame emparejado
                 df = self.get_stream_data(s_cfg, elem_name)
                 resultado[stream_id][elem_name] = df
 
@@ -72,14 +70,11 @@ class ExcelOfflineProvider(CourierDataProvider):
     """
 
     def __init__(self, excel_path: str = "data/raw/Courier_AUTO-C2.xlsm"):
-        # Ruta al archivo de trabajo Excel
         self.excel_path = excel_path
 
-        # Valida que el archivo exista en el sistema de archivos local
         if not os.path.exists(self.excel_path):
             raise FileNotFoundError(f"No se encontró el archivo Excel en: {self.excel_path}")
 
-        # Carga el libro en modo solo datos (data_only=True para leer los valores numéricos cacheados)
         print(f"[ExcelOfflineProvider] Cargando datos desde '{self.excel_path}'...")
         self.wb = openpyxl.load_workbook(self.excel_path, data_only=True)
         print("[ExcelOfflineProvider] Libro cargado exitosamente en memoria.")
@@ -92,58 +87,47 @@ class ExcelOfflineProvider(CourierDataProvider):
         """
         Extrae las filas históricas de 31 días (62 turnos: 31 Turno A + 31 Turno B).
         """
-        # Obtiene la configuración específica para el elemento solicitado
         elem_cfg = stream_cfg.elements[element_name]
 
-        # Determina los nombres exactos de las hojas según la planta
         if stream_cfg.plant.lower() == "cobre":
             ws_courier = self.wb["Courier"]
             ws_lab = self.wb["Laboratorio"]
-            # En Cobre, las filas de datos son 15 a 45 en Courier y 7 a 37 en Laboratorio
             start_row_courier = 15
             start_row_lab = 7
             num_days = 31
         else:
             ws_courier = self.wb["Courier_M."]
             ws_lab = self.wb["Laboratorio_M"]
-            # En Moly, las filas de datos son 9 a 39 en Courier y 7 a 37 en Laboratorio
             start_row_courier = 9
             start_row_lab = 7
             num_days = 31
 
-        # Convierte las letras de columnas a índices numéricos
         idx_cour_a = self._col_letter_to_index(elem_cfg.excel_col_courier_a)
         idx_cour_b = self._col_letter_to_index(elem_cfg.excel_col_courier_b)
         idx_lab_a = self._col_letter_to_index(elem_cfg.excel_col_lab_a)
         idx_lab_b = self._col_letter_to_index(elem_cfg.excel_col_lab_b)
 
-        # Columna B es siempre la Fecha en ambas hojas
         idx_date_cour = 2
         idx_date_lab = 2
 
         filas = []
 
-        # Recorre cada uno de los 31 días consecutivos
         for i in range(num_days):
             r_cour = start_row_courier + i
             r_lab = start_row_lab + i
 
-            # Extrae la fecha base
             raw_date = ws_courier.cell(r_cour, idx_date_cour).value
             if raw_date is None:
                 raw_date = ws_lab.cell(r_lab, idx_date_lab).value
             if raw_date is None:
                 continue
 
-            # Normaliza la fecha a objeto date
             if isinstance(raw_date, datetime):
                 fecha_base = raw_date.date()
             else:
                 fecha_base = pd.to_datetime(raw_date).date()
 
-            # ------------------------------------------------------------------
-            # 1. Registro del Turno A (Guardia Día: 07:30 a 18:30)
-            # ------------------------------------------------------------------
+            # Turno A (Día)
             ts_cour_a = datetime.combine(fecha_base, datetime.min.time()) + timedelta(hours=18, minutes=30)
             ts_lab_a = datetime.combine(fecha_base, datetime.min.time()) + timedelta(hours=7, minutes=30)
 
@@ -159,9 +143,7 @@ class ExcelOfflineProvider(CourierDataProvider):
                 "val_lab": float(val_l_a) if isinstance(val_l_a, (int, float)) else None,
             })
 
-            # ------------------------------------------------------------------
-            # 2. Registro del Turno B (Guardia Noche: 19:30 a 06:30 día siguiente)
-            # ------------------------------------------------------------------
+            # Turno B (Noche)
             ts_cour_b = datetime.combine(fecha_base + timedelta(days=1), datetime.min.time()) + timedelta(hours=6, minutes=30)
             ts_lab_b = datetime.combine(fecha_base, datetime.min.time()) + timedelta(hours=19, minutes=30)
 
@@ -177,7 +159,6 @@ class ExcelOfflineProvider(CourierDataProvider):
                 "val_lab": float(val_l_b) if isinstance(val_l_b, (int, float)) else None,
             })
 
-        # Construye el DataFrame y ordena cronológicamente
         df = pd.DataFrame(filas)
         df = df.sort_values(by=["date", "shift"]).reset_index(drop=True)
         return df
@@ -188,47 +169,156 @@ class PiGatewayProvider(CourierDataProvider):
     Proveedor de datos Online para entorno PROD (WSL2 Debian Linux).
     Se comunica por HTTP con la pasarela PiGateway (Windows C# / AF SDK)
     utilizando el cliente 'scripts.pi_client.PiGateway'.
+    Implementa caché en memoria para evitar reconsultar tags ya descargados.
     """
 
     def __init__(self, host: Optional[str] = None, puerto: int = 5000):
-        # Importación diferida para no requerir conexión en entorno Slackware
         from scripts.pi_client import PiGateway
 
         print(f"[PiGatewayProvider] Inicializando conexión hacia PiGateway ({host or 'autodetect'}:{puerto})...")
-        # Instancia el cliente oficial de la pasarela PI
         self.client = PiGateway(host=host, puerto=puerto)
-        # Comprueba estado de salud del servicio
         health = self.client.health()
         print(f"[PiGatewayProvider] Conexión establecida exitosamente: {health}")
 
+        # Diccionario de caché en memoria para almacenar las series descargadas por tag
+        # self._tag_cache[tag_name] -> DataFrame de eventos archivados
+        self._tag_cache: Dict[str, pd.DataFrame] = {}
+
+    def _get_val_at(
+        self, df_tag: pd.DataFrame, target_ts: pd.Timestamp, max_tolerance_hours: float = 3.0
+    ) -> Optional[float]:
+        """
+        Busca el valor archivado más cercano a target_ts dentro de max_tolerance_hours.
+        Si la diferencia supera la tolerancia o el dato es inválido, retorna None.
+        """
+        if df_tag.empty:
+            return None
+
+        # Filtra únicamente eventos con calidad buena (good == True)
+        if "good" in df_tag.columns:
+            valid_events = df_tag[df_tag["good"] == True]
+        else:
+            valid_events = df_tag
+
+        valid_events = valid_events.dropna(subset=["value"])
+        if valid_events.empty:
+            return None
+
+        # Calcula la diferencia temporal absoluta respecto a target_ts
+        diffs = (valid_events["t"] - target_ts).abs()
+        min_idx = diffs.idxmin()
+        min_diff = diffs.loc[min_idx]
+
+        # Verifica si el evento cae dentro de la ventana de tolerancia
+        if min_diff <= pd.Timedelta(hours=max_tolerance_hours):
+            raw_val = valid_events.loc[min_idx, "value"]
+            try:
+                val_float = float(raw_val)
+                return val_float if not np.isnan(val_float) else None
+            except (ValueError, TypeError):
+                return None
+
+        return None
+
     def get_stream_data(self, stream_cfg: StreamConfig, element_name: str) -> pd.DataFrame:
         """
-        Extrae los valores de PI Data Archive para los 31 días hacia atrás.
-        Utiliza el método recorded_by_count o summary para las marcas exactas.
+        Extrae los valores de PI Data Archive para los últimos 31 días y los empareja
+        en una grilla idéntica a ExcelOfflineProvider:
+        - Turno A: Courier a las 18:30:00, Laboratorio a las 07:30:00.
+        - Turno B: Courier a las 06:30:00 (día siguiente), Laboratorio a las 19:30:00.
         """
         elem_cfg = stream_cfg.elements[element_name]
+        tag_cour = elem_cfg.courier_tag
+        tag_lab = elem_cfg.lab_tag
 
-        # Define la ventana de los últimos 31 días
-        fecha_fin = datetime.now()
-        fecha_inicio = fecha_fin - timedelta(days=31)
+        # Define la fecha de corte de referencia (Fecha_Ing de la macro VBA):
+        # Si la hora actual >= 22 hrs, evalúa hoy; de lo contrario, evalúa ayer.
+        now = datetime.now()
+        if now.hour >= 22:
+            fecha_ref = now.date()
+        else:
+            fecha_ref = now.date() - timedelta(days=1)
 
-        str_inicio = fecha_inicio.strftime("%Y-%m-%d 00:00:00")
-        str_fin = fecha_fin.strftime("%Y-%m-%d 23:59:59")
+        # Genera los 31 días consecutivos hasta fecha_ref
+        dates = [fecha_ref - timedelta(days=30 - i) for i in range(31)]
 
-        # Tags a consultar
-        tags = [elem_cfg.courier_tag]
-        if elem_cfg.lab_tag:
-            tags.append(elem_cfg.lab_tag)
+        # Ventana temporal para la consulta a PI (con margen de 1 día antes y después)
+        str_inicio = (dates[0] - timedelta(days=1)).strftime("%Y-%m-%d 00:00:00")
+        str_fin = (dates[-1] + timedelta(days=2)).strftime("%Y-%m-%d 23:59:59")
 
-        # Consulta los datos registrados en PI
-        df_raw = self.client.recorded(tags, str_inicio, str_fin)
+        # Identifica qué tags no están aún en la caché
+        tags_to_fetch = []
+        if tag_cour not in self._tag_cache:
+            tags_to_fetch.append(tag_cour)
+        if tag_lab and tag_lab not in self._tag_cache:
+            tags_to_fetch.append(tag_lab)
 
-        # Pivota los datos a formato ancho por timestamp
-        df_wide = self.client.to_wide(df_raw)
+        # Descarga desde PI únicamente los tags no cacheados
+        if tags_to_fetch:
+            df_raw = self.client.recorded(tags_to_fetch, str_inicio, str_fin)
+            for t_name in tags_to_fetch:
+                df_sub = df_raw[df_raw["tag"] == t_name].copy()
+                self._tag_cache[t_name] = df_sub
 
-        # Aquí se aplicaría el muestreo en las marcas exactas de 18:30 y 06:30
-        # Retorna el DataFrame emparejado con la misma estructura que ExcelOfflineProvider
-        return df_wide
+        df_cour = self._tag_cache.get(tag_cour, pd.DataFrame())
+        df_lab = self._tag_cache.get(tag_lab, pd.DataFrame()) if tag_lab else pd.DataFrame()
+
+        # Zona horaria configurada en el cliente PI (ej. 'America/Lima')
+        tz_local = self.client.zona_local
+
+        filas = []
+
+        # Itera por cada día y construye los turnos emparejados
+        for d in dates:
+            # ------------------------------------------------------------------
+            # 1. Turno A (Guardia Día: 07:30 a 18:30)
+            # Courier integra a las 18:30:00 del mismo día
+            # Laboratorio ensaya a las 07:30:00 del mismo día
+            # ------------------------------------------------------------------
+            dt_cour_a = datetime.combine(d, datetime.min.time()) + timedelta(hours=18, minutes=30)
+            dt_lab_a = datetime.combine(d, datetime.min.time()) + timedelta(hours=7, minutes=30)
+
+            ts_cour_a = pd.Timestamp(dt_cour_a).tz_localize(tz_local)
+            ts_lab_a = pd.Timestamp(dt_lab_a).tz_localize(tz_local)
+
+            val_c_a = self._get_val_at(df_cour, ts_cour_a, max_tolerance_hours=3.0)
+            val_l_a = self._get_val_at(df_lab, ts_lab_a, max_tolerance_hours=4.0) if tag_lab else None
+
+            filas.append({
+                "date": d,
+                "shift": "A",
+                "timestamp_cour": dt_cour_a,
+                "timestamp_lab": dt_lab_a,
+                "val_cour": val_c_a,
+                "val_lab": val_l_a,
+            })
+
+            # ------------------------------------------------------------------
+            # 2. Turno B (Guardia Noche: 19:30 a 06:30 día siguiente)
+            # Courier integra a las 06:30:00 del día siguiente (d + 1)
+            # Laboratorio ensaya a las 19:30:00 del día d
+            # ------------------------------------------------------------------
+            dt_cour_b = datetime.combine(d + timedelta(days=1), datetime.min.time()) + timedelta(hours=6, minutes=30)
+            dt_lab_b = datetime.combine(d, datetime.min.time()) + timedelta(hours=19, minutes=30)
+
+            ts_cour_b = pd.Timestamp(dt_cour_b).tz_localize(tz_local)
+            ts_lab_b = pd.Timestamp(dt_lab_b).tz_localize(tz_local)
+
+            val_c_b = self._get_val_at(df_cour, ts_cour_b, max_tolerance_hours=3.0)
+            val_l_b = self._get_val_at(df_lab, ts_lab_b, max_tolerance_hours=4.0) if tag_lab else None
+
+            filas.append({
+                "date": d,
+                "shift": "B",
+                "timestamp_cour": dt_cour_b,
+                "timestamp_lab": dt_lab_b,
+                "val_cour": val_c_b,
+                "val_lab": val_l_b,
+            })
+
+        df_final = pd.DataFrame(filas)
+        df_final = df_final.sort_values(by=["date", "shift"]).reset_index(drop=True)
+        return df_final
 
 
 def get_provider(mode: str = "dev", excel_path: str = "data/raw/Courier_AUTO-C2.xlsm") -> CourierDataProvider:
