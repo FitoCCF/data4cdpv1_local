@@ -564,3 +564,339 @@ class ExcelCloneProvider:
         }
 
         return {"cobre": cobre_series, "moly": moly_series}
+
+
+class PiGatewayCloneProvider:
+    """
+    Proveedor de datos en línea para la réplica exacta de Excel en modo PROD (WSL2 Debian).
+    Se conecta a PiGateway (127.0.0.1:5000), descarga los eventos de los últimos 31 días
+    para las corrientes de Cobre y Moly, calcula las diferencias y errores relativos
+    de cada turno, y genera las estructuras para la hoja Portada y las gráficas.
+    """
+
+    def __init__(self, host: Optional[str] = None, puerto: int = 5000):
+        from scripts.courier_demo.provider import PiGatewayProvider
+        from scripts.courier_demo.config import STREAMS_COBRE as DEMO_COBRE, STREAMS_MOLY as DEMO_MOLY
+
+        self.demo_cobre = DEMO_COBRE
+        self.demo_moly = DEMO_MOLY
+        self.pi_prov = PiGatewayProvider(host=host, puerto=puerto)
+        self.excel_fallback = ExcelCloneProvider()
+        self._cached_series: Optional[Dict[str, Any]] = None
+        self._cached_dfs: Optional[Dict[str, Dict[str, pd.DataFrame]]] = None
+
+    def _load_all_dfs(self):
+        if self._cached_dfs is not None:
+            return self._cached_dfs
+
+        print("[PiGatewayCloneProvider] Consultando datos archivados de 31 días desde PI...")
+        cobre_dfs = {}
+        for s_id, s_cfg in self.demo_cobre.items():
+            cobre_dfs[s_id] = {}
+            for elem in s_cfg.elements.keys():
+                cobre_dfs[s_id][elem] = self.pi_prov.get_stream_data(s_cfg, elem)
+
+        moly_dfs = {}
+        for s_id, s_cfg in self.demo_moly.items():
+            moly_dfs[s_id] = {}
+            for elem in s_cfg.elements.keys():
+                moly_dfs[s_id][elem] = self.pi_prov.get_stream_data(s_cfg, elem)
+
+        self._cached_dfs = {"cobre": cobre_dfs, "moly": moly_dfs}
+        return self._cached_dfs
+
+    def get_series_data(self) -> Dict[str, Any]:
+        if self._cached_series is not None:
+            return self._cached_series
+
+        dfs = self._load_all_dfs()
+        cobre_dfs = dfs["cobre"]
+        moly_dfs = dfs["moly"]
+
+        # Obtenemos las etiquetas de turnos
+        ref_df = cobre_dfs["alim_rougher"]["%Cu"]
+        shifts_cobre = [f"{row.date.strftime('%d/%m')} {row.shift}" for row in ref_df.itertuples()]
+
+        ref_m_df = moly_dfs["alim_rougher_moly"]["%Cu"]
+        shifts_moly = [f"{row.date.strftime('%d/%m')} {row.shift}" for row in ref_m_df.itertuples()]
+
+        def _build_col_series(df: pd.DataFrame, tol: float) -> Dict[str, Any]:
+            c_vals = []
+            l_vals = []
+            d_vals = []
+            e_vals = []
+            sup_vals = []
+            inf_vals = []
+
+            for row in df.itertuples():
+                c_f = float(row.val_cour) if row.val_cour is not None else np.nan
+                l_f = float(row.val_lab) if row.val_lab is not None else np.nan
+
+                c_vals.append(c_f)
+                l_vals.append(l_f)
+
+                if not np.isnan(l_f) and not np.isnan(c_f):
+                    diff = l_f - c_f
+                    d_vals.append(diff)
+                    if abs(l_f) > 1e-6:
+                        err = abs(diff) / l_f * 100.0
+                        e_vals.append(err)
+                    else:
+                        e_vals.append(np.nan)
+                else:
+                    d_vals.append(np.nan)
+                    e_vals.append(np.nan)
+
+                if not np.isnan(l_f):
+                    sup_vals.append(l_f * (1.0 + tol))
+                    inf_vals.append(l_f * (1.0 - tol))
+                else:
+                    sup_vals.append(np.nan)
+                    inf_vals.append(np.nan)
+
+            valid_err = [e for e in e_vals if not np.isnan(e)]
+            total = len(valid_err)
+            if total > 0:
+                n_acep = sum(1 for e in valid_err if e <= (tol * 100))
+                n_fuera = total - n_acep
+                pct_acep = (n_acep / total) * 100.0
+                pct_fuera = (n_fuera / total) * 100.0
+            else:
+                n_acep, n_fuera, pct_acep, pct_fuera = 0, 0, 0.0, 0.0
+
+            return {
+                "cour": np.array(c_vals),
+                "lab": np.array(l_vals),
+                "dif": np.array(d_vals),
+                "err": np.array(e_vals),
+                "sup": np.array(sup_vals),
+                "inf": np.array(inf_vals),
+                "tol": tol,
+                "n_acep": n_acep,
+                "n_fuera": n_fuera,
+                "pct_acep": pct_acep,
+                "pct_fuera": pct_fuera,
+                "total": total,
+            }
+
+        cobre_series = {
+            "shifts": shifts_cobre,
+            "alim_cu": _build_col_series(cobre_dfs["alim_rougher"]["%Cu"], 0.11),
+            "alim_mo": _build_col_series(cobre_dfs["alim_rougher"]["%Mo"], 0.11),
+            "alim_fe": _build_col_series(cobre_dfs["alim_rougher"]["%Fe"], 0.11),
+            "alim_zn": _build_col_series(cobre_dfs["alim_rougher"]["%Zn"], 0.11),
+            "cola_cu": _build_col_series(cobre_dfs["cola_final"]["%Cu"], 0.20),
+            "cola_mo": _build_col_series(cobre_dfs["cola_final"]["%Mo"], 0.20),
+            "cola_fe": _build_col_series(cobre_dfs["cola_final"]["%Fe"], 0.20),
+            "conc_cu": _build_col_series(cobre_dfs["conc_final"]["%Cu"], 0.06),
+            "conc_mo": _build_col_series(cobre_dfs["conc_final"]["%Mo"], 0.06),
+            "conc_fe": _build_col_series(cobre_dfs["conc_final"]["%Fe"], 0.06),
+            "conc_ins": _build_col_series(cobre_dfs["conc_final"]["%Ins"], 0.10),
+        }
+
+        moly_series = {
+            "shifts": shifts_moly,
+            "alim_cu": _build_col_series(moly_dfs["alim_rougher_moly"]["%Cu"], 0.11),
+            "alim_mo": _build_col_series(moly_dfs["alim_rougher_moly"]["%Mo"], 0.11),
+            "alim_fe": _build_col_series(moly_dfs["alim_rougher_moly"]["%Fe"], 0.11),
+            "cola_cu": _build_col_series(moly_dfs["cola_rougher_moly"]["%Cu"], 0.05),
+            "cola_mo": _build_col_series(moly_dfs["cola_rougher_moly"]["%Mo"], 0.10),
+            "cola_fe": _build_col_series(moly_dfs["cola_rougher_moly"]["%Fe"], 0.10),
+            "conc_cu": _build_col_series(moly_dfs["conc_final_moly"]["%Cu"], 0.05),
+            "conc_mo": _build_col_series(moly_dfs["conc_final_moly"]["%Mo"], 0.025),
+            "conc_fe": _build_col_series(moly_dfs["conc_final_moly"]["%Fe"], 0.05),
+            "conc_ins": _build_col_series(moly_dfs["conc_final_moly"]["%Ins"], 0.05),
+        }
+
+        self._cached_series = {"cobre": cobre_series, "moly": moly_series}
+        return self._cached_series
+
+    def get_portada_data(self) -> Dict[str, Any]:
+        series = self.get_series_data()
+        dfs = self._load_all_dfs()
+
+        # Fecha más reciente evaluada
+        ref_df = dfs["cobre"]["alim_rougher"]["%Cu"]
+        latest_date = ref_df["date"].iloc[-1]
+        date_str = latest_date.strftime("%d-%b-%Y")
+
+        def _extract_turn_vals(df: pd.DataFrame, dec: int = 3):
+            df_day = df[df["date"] == latest_date]
+            row_a = df_day[df_day["shift"] == "A"]
+            row_b = df_day[df_day["shift"] == "B"]
+
+            c_a = row_a["val_cour"].values[0] if not row_a.empty else None
+            l_a = row_a["val_lab"].values[0] if not row_a.empty else None
+            c_b = row_b["val_cour"].values[0] if not row_b.empty else None
+            l_b = row_b["val_lab"].values[0] if not row_b.empty else None
+
+            d_a = (l_a - c_a) if (l_a is not None and c_a is not None) else "Sin dato"
+            p_a = (abs(d_a) / l_a * 100.0) if (isinstance(d_a, float) and l_a is not None and l_a != 0) else "Sin dato"
+
+            d_b = (l_b - c_b) if (l_b is not None and c_b is not None) else "Sin dato"
+            p_b = (abs(d_b) / l_b * 100.0) if (isinstance(d_b, float) and l_b is not None and l_b != 0) else "Sin dato"
+
+            return {
+                "turn_a": {"cour": c_a if c_a is not None else "Sin dato", "lab": l_a if l_a is not None else "Sin dato"},
+                "turn_b": {"cour": c_b if c_b is not None else "Sin dato", "lab": l_b if l_b is not None else "Sin dato"},
+                "dif_a": d_a, "pct_a": p_a,
+                "dif_b": d_b, "pct_b": p_b,
+                "dec": dec,
+            }
+
+        def _calc_stdev(series_dict: Dict[str, Any], key: str):
+            arr = series_dict[key]["err"]
+            valid = arr[~np.isnan(arr)]
+            if len(valid) > 1:
+                return float(np.std(valid, ddof=1))
+            return "Sin dato"
+
+        stdev_cobre_cols = [
+            ("ALIM. Cu", _calc_stdev(series["cobre"], "alim_cu")),
+            ("ALIM. Mo", _calc_stdev(series["cobre"], "alim_mo")),
+            ("ALIM. Fe", _calc_stdev(series["cobre"], "alim_fe")),
+            ("COLA Cu", _calc_stdev(series["cobre"], "cola_cu")),
+            ("COLA Mo", _calc_stdev(series["cobre"], "cola_mo")),
+            ("COLA Fe", _calc_stdev(series["cobre"], "cola_fe")),
+            ("CONC. Cu", _calc_stdev(series["cobre"], "conc_cu")),
+            ("CONC. Mo", _calc_stdev(series["cobre"], "conc_mo")),
+            ("CONC. Fe", _calc_stdev(series["cobre"], "conc_fe")),
+        ]
+
+        stdev_moly_cols = [
+            ("ALIM. R. Cu", _calc_stdev(series["moly"], "alim_cu")),
+            ("ALIM. R. Mo", _calc_stdev(series["moly"], "alim_mo")),
+            ("COLA R. Cu", _calc_stdev(series["moly"], "cola_cu")),
+            ("COLA R. Mo", _calc_stdev(series["moly"], "cola_mo")),
+            ("CONC. Cu", _calc_stdev(series["moly"], "conc_cu")),
+            ("CONC. Mo", _calc_stdev(series["moly"], "conc_mo")),
+        ]
+
+        def _rec_2prod(f, c, t):
+            try:
+                if f is not None and c is not None and t is not None and f != "Sin dato" and c != "Sin dato" and t != "Sin dato":
+                    f, c, t = float(f), float(c), float(t)
+                    den = f * (c - t)
+                    if abs(den) > 1e-6:
+                        r = (c * (f - t)) / den * 100.0
+                        return max(0.0, min(100.0, r))
+                return "Sin dato"
+            except:
+                return "Sin dato"
+
+        alim_cu = _extract_turn_vals(dfs["cobre"]["alim_rougher"]["%Cu"])
+        conc_cu = _extract_turn_vals(dfs["cobre"]["conc_final"]["%Cu"])
+        cola_cu = _extract_turn_vals(dfs["cobre"]["cola_final"]["%Cu"])
+
+        rec_cu_a_cour = _rec_2prod(alim_cu["turn_a"]["cour"], conc_cu["turn_a"]["cour"], cola_cu["turn_a"]["cour"])
+        rec_cu_a_lab = _rec_2prod(alim_cu["turn_a"]["lab"], conc_cu["turn_a"]["lab"], cola_cu["turn_a"]["lab"])
+        rec_cu_b_cour = _rec_2prod(alim_cu["turn_b"]["cour"], conc_cu["turn_b"]["cour"], cola_cu["turn_b"]["cour"])
+        rec_cu_b_lab = _rec_2prod(alim_cu["turn_b"]["lab"], conc_cu["turn_b"]["lab"], cola_cu["turn_b"]["lab"])
+
+        alim_mo = _extract_turn_vals(dfs["cobre"]["alim_rougher"]["%Mo"])
+        conc_mo = _extract_turn_vals(dfs["cobre"]["conc_final"]["%Mo"])
+        cola_mo = _extract_turn_vals(dfs["cobre"]["cola_final"]["%Mo"])
+
+        rec_mo_a_cour = _rec_2prod(alim_mo["turn_a"]["cour"], conc_mo["turn_a"]["cour"], cola_mo["turn_a"]["cour"])
+        rec_mo_a_lab = _rec_2prod(alim_mo["turn_a"]["lab"], conc_mo["turn_a"]["lab"], cola_mo["turn_a"]["lab"])
+        rec_mo_b_cour = _rec_2prod(alim_mo["turn_b"]["cour"], conc_mo["turn_b"]["cour"], cola_mo["turn_b"]["cour"])
+        rec_mo_b_lab = _rec_2prod(alim_mo["turn_b"]["lab"], conc_mo["turn_b"]["lab"], cola_mo["turn_b"]["lab"])
+
+        m_alim_mo = _extract_turn_vals(dfs["moly"]["alim_rougher_moly"]["%Mo"])
+        m_conc_mo = _extract_turn_vals(dfs["moly"]["conc_final_moly"]["%Mo"])
+        m_cola_mo = _extract_turn_vals(dfs["moly"]["cola_rougher_moly"]["%Mo"])
+
+        m_rec_a_cour = _rec_2prod(m_alim_mo["turn_a"]["cour"], m_conc_mo["turn_a"]["cour"], m_cola_mo["turn_a"]["cour"])
+        m_rec_a_lab = _rec_2prod(m_alim_mo["turn_a"]["lab"], m_conc_mo["turn_a"]["lab"], m_cola_mo["turn_a"]["lab"])
+        m_rec_b_cour = _rec_2prod(m_alim_mo["turn_b"]["cour"], m_conc_mo["turn_b"]["cour"], m_cola_mo["turn_b"]["cour"])
+        m_rec_b_lab = _rec_2prod(m_alim_mo["turn_b"]["lab"], m_conc_mo["turn_b"]["lab"], m_cola_mo["turn_b"]["lab"])
+
+        fallback_portada = self.excel_fallback.get_portada_data()
+
+        cobre_portada = {
+            "title": "Comparación Courier Planta de Cobre C2 - Laboratorio",
+            "date_str": date_str,
+            "streams": [
+                {
+                    "name": "Alimentación Rougher Promedio",
+                    "elements": [
+                        {"name": "%Cu", **_extract_turn_vals(dfs["cobre"]["alim_rougher"]["%Cu"], 3)},
+                        {"name": "%Mo", **_extract_turn_vals(dfs["cobre"]["alim_rougher"]["%Mo"], 3)},
+                        {"name": "%Fe", **_extract_turn_vals(dfs["cobre"]["alim_rougher"]["%Fe"], 3)},
+                        {"name": "%Zn", **_extract_turn_vals(dfs["cobre"]["alim_rougher"]["%Zn"], 3)},
+                        {"name": "%Ox", "turn_a": {"cour": "Sin dato", "lab": "Sin dato"}, "turn_b": {"cour": "Sin dato", "lab": "Sin dato"}, "dif_a": "Sin dato", "pct_a": "Sin dato", "dif_b": "Sin dato", "pct_b": "Sin dato", "dec": 3},
+                    ]
+                },
+                {
+                    "name": "Cola Final",
+                    "elements": [
+                        {"name": "%Cu", **_extract_turn_vals(dfs["cobre"]["cola_final"]["%Cu"], 3)},
+                        {"name": "%Mo", **_extract_turn_vals(dfs["cobre"]["cola_final"]["%Mo"], 3)},
+                        {"name": "%Fe", **_extract_turn_vals(dfs["cobre"]["cola_final"]["%Fe"], 3)},
+                    ]
+                },
+                {
+                    "name": "Concentrado Final",
+                    "elements": [
+                        {"name": "%Cu", **_extract_turn_vals(dfs["cobre"]["conc_final"]["%Cu"], 2)},
+                        {"name": "%Mo", **_extract_turn_vals(dfs["cobre"]["conc_final"]["%Mo"], 3)},
+                        {"name": "%Fe", **_extract_turn_vals(dfs["cobre"]["conc_final"]["%Fe"], 2)},
+                        {"name": "%Ins", **_extract_turn_vals(dfs["cobre"]["conc_final"]["%Ins"], 2)},
+                        {"name": "%Ox", "turn_a": {"cour": "Sin dato", "lab": "Sin dato"}, "turn_b": {"cour": "Sin dato", "lab": "Sin dato"}, "dif_a": "Sin dato", "pct_a": "Sin dato", "dif_b": "Sin dato", "pct_b": "Sin dato", "dec": 3},
+                    ]
+                }
+            ],
+            "recovery": [
+                {"name": "Recuperación Cu", "turn_a": {"cour": rec_cu_a_cour, "lab": rec_cu_a_lab}, "turn_b": {"cour": rec_cu_b_cour, "lab": rec_cu_b_lab}},
+                {"name": "Recuperación Mo", "turn_a": {"cour": rec_mo_a_cour, "lab": rec_mo_a_lab}, "turn_b": {"cour": rec_mo_b_cour, "lab": rec_mo_b_lab}},
+            ],
+            "stdev_table": {
+                "title": "DIFERENCIA LABORATORIO vs COURIER - DESVIACION ESTANDAR (%)",
+                "label": "ULTIMOS 31 DIAS",
+                "columns": stdev_cobre_cols,
+            },
+            "intermediate_streams": fallback_portada["cobre"]["intermediate_streams"]
+        }
+
+        moly_portada = {
+            "title": "Comparación Courier Planta de Moly C2 - Laboratorio",
+            "streams": [
+                {
+                    "name": "Alimentación Rougher",
+                    "elements": [
+                        {"name": "%Cu", **_extract_turn_vals(dfs["moly"]["alim_rougher_moly"]["%Cu"], 3)},
+                        {"name": "%Mo", **_extract_turn_vals(dfs["moly"]["alim_rougher_moly"]["%Mo"], 3)},
+                        {"name": "%Fe", **_extract_turn_vals(dfs["moly"]["alim_rougher_moly"]["%Fe"], 3)},
+                    ]
+                },
+                {
+                    "name": "Cola Rougher Promedio",
+                    "elements": [
+                        {"name": "%Cu", **_extract_turn_vals(dfs["moly"]["cola_rougher_moly"]["%Cu"], 3)},
+                        {"name": "%Mo", **_extract_turn_vals(dfs["moly"]["cola_rougher_moly"]["%Mo"], 3)},
+                        {"name": "%Fe", **_extract_turn_vals(dfs["moly"]["cola_rougher_moly"]["%Fe"], 3)},
+                    ]
+                },
+                {
+                    "name": "Concentrado Ultima limpieza",
+                    "elements": [
+                        {"name": "%Cu", **_extract_turn_vals(dfs["moly"]["conc_final_moly"]["%Cu"], 3)},
+                        {"name": "%Mo", **_extract_turn_vals(dfs["moly"]["conc_final_moly"]["%Mo"], 2)},
+                        {"name": "%Fe", **_extract_turn_vals(dfs["moly"]["conc_final_moly"]["%Fe"], 3)},
+                        {"name": "%Ins", **_extract_turn_vals(dfs["moly"]["conc_final_moly"]["%Ins"], 2)},
+                        {"name": "%Ox", "turn_a": {"cour": "Sin dato", "lab": "Sin dato"}, "turn_b": {"cour": "Sin dato", "lab": "Sin dato"}, "dif_a": "Sin dato", "pct_a": "Sin dato", "dif_b": "Sin dato", "pct_b": "Sin dato", "dec": 3},
+                    ]
+                }
+            ],
+            "recovery": [
+                {"name": "Recuperación Mo", "turn_a": {"cour": m_rec_a_cour, "lab": m_rec_a_lab}, "turn_b": {"cour": m_rec_b_cour, "lab": m_rec_b_lab}},
+            ],
+            "stdev_table": {
+                "title": "DIFERENCIA LABORATORIO vs COURIER - DESVIACION ESTANDAR (%)",
+                "label": "ULTIMOS 31 DIAS",
+                "columns": stdev_moly_cols,
+            },
+            "intermediate_streams": fallback_portada["moly"]["intermediate_streams"]
+        }
+
+        return {"cobre": cobre_portada, "moly": moly_portada}

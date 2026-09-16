@@ -51,14 +51,9 @@ def generate_clone_dashboard(mode: str = "dev") -> str:
     # 1. Instanciamos el proveedor
     if mode.lower() == "prod":
         try:
-            from scripts.pi_client import PiGateway
-            gw = PiGateway()
-            status = gw.status()
-            if not status.get("ok"):
-                raise ConnectionError(f"PI Gateway respondió con error: {status}")
-            print(f"[PROD] Conexión establecida con PiGateway: {status.get('server')}")
-            # En prod usamos los datos de la hoja dev como fallback o mapeo de PiGateway
-            provider = ExcelCloneProvider()
+            from scripts.courier_excel_clone.provider import PiGatewayCloneProvider
+            provider = PiGatewayCloneProvider()
+            print("[PROD] Conexión establecida y datos de PI Gateway listos.")
         except Exception as e:
             print(f"[ADVERTENCIA] No se pudo conectar con PiGateway ({e}). Usando datos de Excel...")
             provider = ExcelCloneProvider()
