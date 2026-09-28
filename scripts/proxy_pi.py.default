@@ -1,0 +1,157 @@
+# -*- coding: utf-8 -*-
+"""
+proxy_pi.py — Reenviador TCP que corre DENTRO de WSL2.
+================================================================================
+Expone la pasarela PiGateway (que corre en Windows) hacia otras PC de la red,
+reutilizando el mismo camino de exposición que ya usa Vite.
+
+POR QUÉ DENTRO DE WSL Y NO EN WINDOWS
+--------------------------------------------------------------------------------
+El puerto 5173 es alcanzable desde otras PC porque el servidor de Vite vive
+dentro de WSL2. Lo que el firewall de Windows permite no es un `node.exe` de
+Windows, sino el relay de WSL (o un portproxy configurado hacia él). Un proceso
+arrancado del lado Windows NO hereda esa regla; uno arrancado dentro de WSL sí,
+porque sale por el mismo camino que Vite.
+
+    Otra PC  --->  Windows:5173  --->  [relay WSL]  --->  WSL:5173 (este proxy)
+                                                              |
+                                                              v
+                                              Windows:5000 (gw4Pi.exe)
+
+Es un túnel ciego a nivel TCP: no interpreta HTTP, así que gzip,
+Content-Length y los cuerpos POST pasan intactos.
+
+USO
+--------------------------------------------------------------------------------
+    # 1. En Windows, la pasarela en loopback:
+    #    .\\gw4Pi.exe 5000 tpi.southernperu.com.pe
+    #
+    # 2. En WSL (con Vite detenido, porque comparten el 5173):
+    python3 proxy_pi.py
+    #
+    # 3. Desde otra PC:
+    #    curl http://10.60.72.85:5173/health
+
+Variables de entorno:
+    PROXY_PORT    puerto de escucha en WSL      (por defecto 5173)
+    TARGET_HOST   destino: la pasarela          (por defecto 127.0.0.1)
+    TARGET_PORT   puerto de la pasarela         (por defecto 5000)
+    ALLOW_PREFIX  prefijos IP permitidos, separados por comas
+                  ej. "10.60.,172.18."          (por defecto, cualquiera)
+
+ADVERTENCIA: quien alcance este puerto consulta el PI con las credenciales de
+Windows del proceso gw4Pi. Use ALLOW_PREFIX para acotarlo a su subred.
+================================================================================
+"""
+
+import os
+import sys
+import socket
+import threading
+from datetime import datetime
+
+PROXY_PORT   = int(os.environ.get('PROXY_PORT', '5173'))
+TARGET_HOST  = os.environ.get('TARGET_HOST', '127.0.0.1')
+TARGET_PORT  = int(os.environ.get('TARGET_PORT', '5000'))
+ALLOW_PREFIX = [p.strip() for p in os.environ.get('ALLOW_PREFIX', '').split(',')
+                if p.strip()]
+
+BUFFER = 65536
+
+
+def log(msg):
+    print('[{}] {}'.format(datetime.now().strftime('%H:%M:%S'), msg), flush=True)
+
+
+def permitido(ip):
+    if not ALLOW_PREFIX:
+        return True
+    return any(ip.startswith(p) for p in ALLOW_PREFIX)
+
+
+def bombear(origen, destino):
+    """Copia bytes en un sentido hasta que la conexión cierre."""
+    try:
+        while True:
+            datos = origen.recv(BUFFER)
+            if not datos:
+                break
+            destino.sendall(datos)
+    except OSError:
+        pass
+    finally:
+        # half-close: avisa al otro extremo que no habrá más datos en este
+        # sentido, sin cortar el sentido contrario.
+        try:
+            destino.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
+
+
+def atender(cliente, origen):
+    destino = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        destino.connect((TARGET_HOST, TARGET_PORT))
+    except OSError as e:
+        log('error hacia la pasarela {}:{} -> {}'.format(
+            TARGET_HOST, TARGET_PORT, e))
+        cliente.close()
+        destino.close()
+        return
+
+    ida = threading.Thread(target=bombear, args=(cliente, destino), daemon=True)
+    vuelta = threading.Thread(target=bombear, args=(destino, cliente), daemon=True)
+    ida.start()
+    vuelta.start()
+    ida.join()
+    vuelta.join()
+
+    for s in (cliente, destino):
+        try:
+            s.close()
+        except OSError:
+            pass
+
+
+def main():
+    servidor = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    servidor.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+    try:
+        # 0.0.0.0 dentro de WSL: es lo que el relay expone hacia la red.
+        servidor.bind(('0.0.0.0', PROXY_PORT))
+    except OSError as e:
+        if e.errno == 98:   # EADDRINUSE
+            log('El puerto {} ya está ocupado dentro de WSL. '
+                '¿Está corriendo Vite? Deténgalo o use PROXY_PORT=<otro>.'
+                .format(PROXY_PORT))
+        else:
+            log('No se pudo escuchar en {}: {}'.format(PROXY_PORT, e))
+        sys.exit(1)
+
+    servidor.listen(64)
+    log('Proxy TCP activo en 0.0.0.0:{} (dentro de WSL)'.format(PROXY_PORT))
+    log('Reenviando a {}:{}'.format(TARGET_HOST, TARGET_PORT))
+    log('Filtro de origen: {}'.format(
+        ', '.join(ALLOW_PREFIX) if ALLOW_PREFIX else 'ninguno'))
+    log('Ctrl+C para detener.')
+
+    try:
+        while True:
+            cliente, addr = servidor.accept()
+            origen = addr[0]
+            if not permitido(origen):
+                log('RECHAZADO {} (fuera de ALLOW_PREFIX)'.format(origen))
+                cliente.close()
+                continue
+            log('conexión desde {}'.format(origen))
+            threading.Thread(target=atender, args=(cliente, origen),
+                             daemon=True).start()
+    except KeyboardInterrupt:
+        log('Detenido.')
+    finally:
+        servidor.close()
+
+
+if __name__ == '__main__':
+    main()
