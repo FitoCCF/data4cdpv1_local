@@ -47,7 +47,7 @@ USO
     PI_TOKEN="una-frase-larga-y-privada" python3 proxy_pi.py
     #
     # 3. Desde otra PC:
-    #    curl -H "X-PI-Token: una-frase-larga-y-privada" http://10.60.72.85:5173/health
+    #    curl -H "X-PI-Token: una-frase-larga-y-privada" http://10.25.18.85:5173/health
 
 Variables de entorno:
     PROXY_PORT    puerto de escucha en WSL      (por defecto 5173)

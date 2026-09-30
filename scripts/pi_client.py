@@ -35,7 +35,7 @@ USO COMO BIBLIOTECA
 --------------------------------------------------------------------------------
     from pi_client import PiGateway
 
-    pi = PiGateway(host='10.60.72.85', puerto=5173, token='...')
+    pi = PiGateway(host='10.25.18.85', puerto=5173, token='...')
     print(pi.health())
 
     # Vista Django -> JSON para Vue (sin pandas)
@@ -48,7 +48,7 @@ USO COMO BIBLIOTECA
 USO EN DJANGO
 --------------------------------------------------------------------------------
     # settings.py  (o variables de entorno del proceso)
-    #   PI_GATEWAY_HOST=10.60.72.85
+    #   PI_GATEWAY_HOST=10.25.18.85
     #   PI_GATEWAY_PORT=5173
     #   PI_TOKEN=...
     #
@@ -589,6 +589,11 @@ class PiGateway:
         tf = pd.Timestamp(fin)
         if t0 >= tf:
             raise ValueError('El inicio debe ser anterior al fin.')
+        if dias <= 0:
+            # Sin este piso, t1 = min(t0 + dias, tf) queda <= t0 y el bucle
+            # de abajo no vuelve a satisfacer su condición de salida.
+            raise ValueError('chunk_dias debe ser mayor que 0 (recibido: {}).'
+                             .format(dias))
         # Tope defensivo: pandas.Timedelta desborda con valores enormes, y
         # este método se llama con "sin troceo" desde el extractor.
         dias = min(float(dias), 3650.0)
@@ -928,7 +933,7 @@ def reiniciar_cliente(**kwargs) -> PiGateway:
 # Conexión: por entorno (PI_GATEWAY_HOST, PI_GATEWAY_PORT, PI_TOKEN) o por
 # opciones --host, --puerto, --token, que tienen prioridad.
 #
-#   python3 pi_client.py --host 10.60.72.85 --puerto 5173 health
+#   python3 pi_client.py --host 10.25.18.85 --puerto 5173 health
 # =========================================================================== #
 def _tabla(filas: List[Dict[str, Any]], columnas: Sequence[str]) -> str:
     """
