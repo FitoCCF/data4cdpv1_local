@@ -2,3 +2,7 @@
 .pixi/*
 !.pixi/config.toml
 .idea/
+
+# Datos de planta (no versionar)
+data/Reporte_Espesador_de_Lamas_PI.xlsm
+data/raw/PSI Molienda C2 - DATA ACTUALIZADA HASTA 03-03-2026 (version 1).xlsx
